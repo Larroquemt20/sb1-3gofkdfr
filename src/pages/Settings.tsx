@@ -57,16 +57,32 @@ export default function Settings() {
       setError(null);
       setSuccess(false);
 
-      const { error } = await supabase
+      const { data: existingSettings, error: selectError } = await supabase
         .from('company_settings')
-        .upsert(settings);
+        .select('*', { count: 'exact' });
 
-      if (error) throw error;
-      
+      if (selectError) throw selectError;
+
+      let dbError;
+      if (existingSettings && existingSettings.length > 0) {
+        const { error: updateError } = await supabase
+          .from('company_settings')
+          .update(settings)
+          .eq('id', existingSettings[0].id); // Assuming only one settings row exists
+        dbError = updateError;
+      } else {
+        const { error: insertError } = await supabase
+          .from('company_settings')
+          .insert([settings]);
+        dbError = insertError;
+      }
+
+      if (dbError) throw dbError;
+
       setSuccess(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving settings:', error);
-      setError('Erro ao salvar as configurações. Por favor, tente novamente.');
+      setError(`Erro ao salvar as configurações. Por favor, tente novamente. Detalhes: ${error.message}`);
     } finally {
       setSaving(false);
     }

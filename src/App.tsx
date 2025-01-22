@@ -1,22 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './lib/supabase';
-import { FileText, Search, Share2, RefreshCw, AlertCircle, Download, Settings } from 'lucide-react';
+import { FileText, Search, Share2, RefreshCw, AlertCircle, Download, Settings as IconSettings } from 'lucide-react';
 import { syncProducts } from './lib/woocommerce';
-import Settings from './pages/Settings';
+import SettingsComponent from './pages/Settings';
+import { generateProductCatalog } from './lib/pdf';
 
 interface Product {
-  id: string;
-  woo_id: number;
   name: string;
   price: number;
+  category?: string;
+}
+
+interface ProductDetails {
+  id: string;
+  woo_id: number;
   description: string | null;
   image_url: string | null;
   category: string | null;
   is_active: boolean;
+  price: number;
 }
 
 function ProductList() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ProductDetails[]>([]);
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
@@ -33,7 +39,7 @@ function ProductList() {
     const { count } = await supabase
       .from('company_settings')
       .select('*', { count: 'exact', head: true });
-    
+
     setHasSettings(count === 1);
   };
 
@@ -41,14 +47,14 @@ function ProductList() {
     try {
       setLoading(true);
       setError(null);
-      
+
       const { data, error: supabaseError } = await supabase
         .from('products')
         .select('*')
         .order('name');
 
       if (supabaseError) throw supabaseError;
-      
+
       setProducts(data || []);
     } catch (error) {
       console.error('Error fetching products:', error);
@@ -111,7 +117,7 @@ function ProductList() {
         .eq('id', productId);
 
       if (updateError) throw updateError;
-      
+
       setProducts(prev =>
         prev.map(p => p.id === productId ? { ...p, price: newPrice } : p)
       );
@@ -122,8 +128,46 @@ function ProductList() {
   };
 
   const generatePDF = async () => {
-    // PDF generation logic will be implemented here
-    console.log('Generating PDF...');
+    if (selectedProducts.size === 0) {
+      setError('Selecione pelo menos um produto para gerar o PDF.');
+      return;
+    }
+
+    const companySettings = await supabase
+      .from('company_settings')
+      .select('*')
+      .single();
+
+    if (companySettings.error || !companySettings.data) {
+      setError('Não foi possível carregar as configurações da empresa para gerar o PDF.');
+      return;
+    }
+
+    const selectedProductList = products.filter(product => selectedProducts.has(product.id));
+
+    try {
+      const pdfBlob = await generateProductCatalog(
+        selectedProductList.map(product => ({
+          name: product.description || 'Sem nome',
+          price: product.price,
+          category: product.category || undefined
+        })),
+        companySettings.data
+      );
+
+      const blobURL = URL.createObjectURL(pdfBlob);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = blobURL;
+      downloadLink.download = 'catalogo-produtos.pdf';
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(blobURL);
+
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      setError('Erro ao gerar PDF. Por favor, tente novamente.');
+    }
   };
 
   const shareOnWhatsApp = () => {
@@ -132,7 +176,7 @@ function ProductList() {
   };
 
   const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    product.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     product.category?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -148,7 +192,7 @@ function ProductList() {
               onClick={() => window.location.href = '/settings'}
               className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
-              <Settings className="mr-2" size={20} />
+              <IconSettings className="mr-2" size={20} />
               Configurações
             </button>
           </div>
@@ -227,14 +271,17 @@ function ProductList() {
                         Categoria
                       </th>
                       <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Preço
+                        Preço Atual
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Novo Preço
                       </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {loading ? (
                       <tr>
-                        <td colSpan={4} className="px-6 py-4 text-center">
+                        <td colSpan={5} className="px-6 py-4 text-center">
                           <div className="flex items-center justify-center gap-2">
                             <RefreshCw className="animate-spin h-5 w-5 text-gray-400" />
                             <span className="text-gray-500">Carregando produtos...</span>
@@ -243,7 +290,7 @@ function ProductList() {
                       </tr>
                     ) : filteredProducts.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-6 py-4 text-center text-gray-500">
+                        <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
                           {searchTerm ? 'Nenhum produto encontrado' : hasSettings ? 'Clique em "Sincronizar com WooCommerce" para importar os produtos' : 'Configure as informações do WooCommerce nas configurações'}
                         </td>
                       </tr>
@@ -263,30 +310,27 @@ function ProductList() {
                               {product.image_url && (
                                 <img
                                   src={product.image_url}
-                                  alt={product.name}
+                                  alt={product.description || 'Imagem do produto'}
                                   className="h-10 w-10 rounded-full mr-3 object-cover"
                                 />
                               )}
                               <div>
                                 <div className="text-sm font-medium text-gray-900">
-                                  {product.name}
+                                  {product.description}
                                 </div>
-                                {product.description && (
-                                  <div className="text-sm text-gray-500">
-                                    {product.description}
-                                  </div>
-                                )}
                               </div>
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {product.category || '-'}
+                            {product.category || '-'}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {product.price}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <input
                               type="number"
-                              value={product.price}
-                              onChange={(e) => handlePriceUpdate(product.id, parseFloat(e.target.value))}
+                              defaultValue={product.price}
+                              onBlur={(e) => handlePriceUpdate(product.id, parseFloat(e.target.value))}
                               className="w-24 px-2 py-1 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               step="0.01"
                               min="0"
@@ -310,13 +354,20 @@ function App() {
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
 
   useEffect(() => {
-    const handlePopState = () => {
+    const handleLocationChange = () => {
       setCurrentPath(window.location.pathname);
     };
 
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('pushstate', handleLocationChange);
+
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('pushstate', handleLocationChange);
+    };
   }, []);
 
-  return currentPath === '/settings' ? <Settings /> : <ProductList />;
+  return currentPath === '/settings' ? <SettingsComponent /> : <ProductList />;
 }
+
+export default App;

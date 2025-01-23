@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useTable } from 'react-table'; // Import useTable hook
+import { Button } from '@mui/material';
 import { supabase } from './lib/supabase';
 import { FileText, Search, Share2, RefreshCw, AlertCircle, Download, Settings as IconSettings } from 'lucide-react';
 import { syncProducts } from './lib/woocommerce';
@@ -19,6 +21,7 @@ interface ProductDetails {
   category: string | null;
   is_active: boolean;
   price: number;
+  catalog_price: number | null;
 }
 
 function ProductList() {
@@ -29,6 +32,44 @@ function ProductList() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSettings, setHasSettings] = useState<boolean | null>(null);
+
+  const columns = React.useMemo(
+    () => [
+      {
+        Header: 'Selecionar',
+        accessor: 'selection', // Usaremos para a lógica de seleção
+      },
+      {
+        Header: 'Imagem',
+        accessor: 'image_url',
+      },
+      {
+        Header: 'Título Produto',
+        accessor: 'description',
+      },
+      {
+        Header: 'Descrição Produto',
+        accessor: 'description',
+      },
+      {
+        Header: 'Categoria',
+        accessor: 'category',
+      },
+      {
+        Header: 'Preço API',
+        accessor: 'price',
+      },
+      {
+        Header: 'Preço Catálogo',
+        accessor: 'catalog_price',
+      },
+      {
+        Header: 'Editar Preço Catálogo',
+        accessor: 'edit_price', // Usaremos para o input de edição
+      },
+    ],
+    []
+  );
 
   useEffect(() => {
     checkSettings();
@@ -50,14 +91,14 @@ function ProductList() {
 
       const { data, error: supabaseError } = await supabase
         .from('products')
-        .select('*')
-        .order('name');
+        .select('*, catalog_price') // Simplificar a query para selecionar apenas 'id'
 
       if (supabaseError) throw supabaseError;
 
       setProducts(data || []);
     } catch (error) {
       console.error('Error fetching products:', error);
+      console.log('Supabase error object:', error); // Logar o objeto de erro completo
       setError('Não foi possível carregar os produtos. Por favor, verifique sua conexão com o Supabase.');
     } finally {
       setLoading(false);
@@ -109,17 +150,17 @@ function ProductList() {
     });
   };
 
-  const handlePriceUpdate = async (productId: string, newPrice: number) => {
+  const handlePriceUpdate = async (productId: string, newCatalogPrice: number) => {
     try {
       const { error: updateError } = await supabase
         .from('products')
-        .update({ price: newPrice })
+        .update({ catalog_price: newCatalogPrice })
         .eq('id', productId);
 
       if (updateError) throw updateError;
 
       setProducts(prev =>
-        prev.map(p => p.id === productId ? { ...p, price: newPrice } : p)
+        prev.map(p => p.id === productId ? { ...p, catalog_price: newCatalogPrice } : p)
       );
     } catch (error) {
       console.error('Error updating price:', error);
@@ -256,25 +297,34 @@ function ProductList() {
               </div>
             </div>
 
-            <div className="bg-white shadow rounded-lg overflow-hidden">
+            <div className="bg-white shadow rounded-lg overflow-hidden overflow-x-auto">
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
+                <table className="table-fixed divide-y divide-gray-200 w-full">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 border border-gray-300 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Selecionar
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Produto
+                      <th scope="col" className="px-6 py-3 border border-gray-300 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Imagem
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 border border-gray-300 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Título Produto
+                      </th>
+                      <th scope="col" className="px-6 py-3 border border-gray-300 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Descrição Produto
+                      </th>
+                      <th scope="col" className="px-6 py-3 border border-gray-300 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Categoria
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Preço Atual
+                      <th scope="col" className="px-6 py-3 border border-gray-300 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Preço API
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Novo Preço
+                      <th scope="col" className="px-6 py-3 border border-gray-300 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Preço Catálogo
+                      </th>
+                      <th scope="col" className="px-6 py-3 border border-gray-300 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Editar Preço Catálogo
                       </th>
                     </tr>
                   </thead>
@@ -296,45 +346,51 @@ function ProductList() {
                       </tr>
                     ) : (
                       filteredProducts.map((product) => (
-                        <tr key={product.id}>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <input
-                              type="checkbox"
-                              checked={selectedProducts.has(product.id)}
-                              onChange={() => handleProductSelect(product.id)}
-                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                            />
+                        <tr key={product.id} className={selectedProducts.has(product.id) ? 'bg-green-100' : ''}>
+                          <td className="px-6 py-4 text-center border border-gray-300">
+                            <button
+                              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                              onClick={() => handleProductSelect(product.id)}
+                            >
+                              Selecionar
+                            </button>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center">
-                              {product.image_url && (
-                                <img
-                                  src={product.image_url}
-                                  alt={product.description || 'Imagem do produto'}
-                                  className="h-10 w-10 rounded-full mr-3 object-cover"
-                                />
-                              )}
-                              <div>
-                                <div className="text-sm font-medium text-gray-900">
-                                  {product.description}
-                                </div>
-                              </div>
+                          <td className="px-4 py-4 break-words text-center align-middle border border-gray-300">
+                            {product.image_url && (
+                              <img
+                                src={product.image_url}
+                                alt={product.description || 'Imagem do produto'}
+                                className="rounded-full object-contain h-32 w-32"
+                              />
+                            )}
+                          </td>
+                          <td className="px-1 py-4 break-words text-left border border-gray-300 align-top">
+                            <div className="text-base font-semibold text-gray-900 break-words">
+                              {product.description?.split(' - ')[0]?.replace(/<[^>]*>/g, '')}
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {product.category || '-'}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            {product.price}
+                          <td className="px-1 py-4 break-words text-left align-middle border border-gray-300 max-w-[200px]">
+                            <div className="text-gray-500 text-sm mt-1 break-words max-w-[200px]">
+                              {product.description?.replace(/<[^>]*>/g, '')}
+                            </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
+                          <td className="px-6 py-4 whitespace-normal text-sm text-gray-500 break-words border border-gray-300">
+                            {product.category || '-'}</td>
+                          <td className="px-6 py-4 border border-gray-300 rounded p-1">
+                            R$ {product.price}
+                          </td>
+                          <td className="px-6 py-4 border border-gray-300 rounded p-1">
+                            R$ {product.catalog_price !== null ? product.catalog_price : product.price}
+                          </td>
+                          <td className="px-6 py-4 border border-gray-300">
                             <input
-                              type="number"
-                              defaultValue={product.price}
-                              onBlur={(e) => handlePriceUpdate(product.id, parseFloat(e.target.value))}
-                              className="w-24 px-2 py-1 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              step="0.01"
-                              min="0"
-                            />
+                                  type="number"
+                                  defaultValue={product.catalog_price || 0}
+                                  onBlur={(e) => handlePriceUpdate(product.id, parseFloat(e.target.value))}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  step="0.01"
+                                  min="0"
+                                />
                           </td>
                         </tr>
                       ))
